@@ -6,6 +6,8 @@ An [x402](https://github.com/x402-foundation/x402) v2 facilitator that lets any 
 
 Deployment, domain, wallets, registry listings and the runbook: [docs/OPERATIONS.md](docs/OPERATIONS.md). Listed on [x402scan](https://www.x402scan.com).
 
+Settlement cost, side by side against a feeless rail: [docs/NANO-RAIL.md](docs/NANO-RAIL.md).
+
 A buyer only needs USDs. They do not need ETH, an account, or an API key: the facilitator verifies their signed payment, pays the gas, and settles on-chain.
 
 Verification and settlement run on the upstream `@x402/core` and `@x402/evm` packages. This repo adds the USDs asset configuration, gas sponsoring for the buyer's first payment, and a guard against a defect in the USDs token described below.
