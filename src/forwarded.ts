@@ -15,3 +15,19 @@ export function withForwardedProto(req: Request): Request {
   }
   return new Request(url, init);
 }
+
+/**
+ * The client address to rate-limit on. Each proxy in front of the app appends
+ * the address it received the connection from to X-Forwarded-For, so only the
+ * last `trustedHops` entries were written by infrastructure; anything before
+ * them is whatever the client chose to send. Cloud Run's front end appends one
+ * entry (the default); an external HTTPS load balancer in front of Cloud Run
+ * appends two. With zero trusted hops, or a header shorter than the hop count,
+ * no forwarded address is trusted.
+ */
+export function clientAddress(forwardedFor: string | undefined, trustedHops: number): string {
+  if (trustedHops <= 0 || !forwardedFor) return 'direct';
+  const hops = forwardedFor.split(',').map((s) => s.trim()).filter(Boolean);
+  if (hops.length < trustedHops) return 'direct';
+  return hops[hops.length - trustedHops];
+}

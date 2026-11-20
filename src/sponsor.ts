@@ -9,6 +9,13 @@ import {
 } from 'viem';
 import { PAYMENT_ASSETS } from './assets.js';
 
+/** The payer's live account state the plan is checked against. */
+export interface PayerState {
+  balance: bigint;
+  /** Next nonce including pending transactions (`eth_getTransactionCount(payer, 'pending')`). */
+  pendingNonce: number;
+}
+
 export interface ApprovalGasPlan {
   payer: `0x${string}`;
   /** Worst-case gas cost of the approve transaction: gas limit times max fee. */
@@ -25,12 +32,14 @@ export interface ApprovalGasPlan {
  * ETH, so the facilitator funds the exact worst-case gas cost first. Only an
  * `approve(Permit2, ...)` on a registered Permit2 asset of this chain is ever
  * funded, and never above `cap`, so the sponsorship cannot be turned into a
- * general-purpose ETH faucet.
+ * general-purpose ETH faucet. The approve must also use the payer's next
+ * nonce: a stale or future nonce can never be mined in its place, so funding it
+ * would hand out ETH without the approval ever landing.
  */
 export async function planApprovalGas(
   serialized: `0x${string}`,
   chainId: number,
-  payerBalance: (payer: `0x${string}`) => Promise<bigint>,
+  payerState: (payer: `0x${string}`) => Promise<PayerState>,
   cap: bigint,
 ): Promise<ApprovalGasPlan> {
   const tx = parseTransaction(serialized as TransactionSerialized);
@@ -59,6 +68,9 @@ export async function planApprovalGas(
   }
 
   const payer = await recoverTransactionAddress({ serializedTransaction: serialized as TransactionSerialized });
-  const balance = await payerBalance(payer);
+  const { balance, pendingNonce } = await payerState(payer);
+  if (tx.nonce !== pendingNonce) {
+    throw new Error(`sponsor_rejected: approve uses nonce ${tx.nonce}, but the payer's next nonce is ${pendingNonce}`);
+  }
   return { payer, maxCost, topUp: balance >= maxCost ? 0n : maxCost - balance };
 }

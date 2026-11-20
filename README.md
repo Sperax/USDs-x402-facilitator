@@ -70,7 +70,7 @@ The container is stateless and listens on `PORT`, so it runs as-is on Cloud Run,
 | `GET` | `/openapi.json` | OpenAPI 3.1 discovery document for x402 registries (x402scan): paid routes carry `x-payment-info`, free routes `security: []` |
 | `GET` | `/` | Service metadata |
 
-`/verify` and `/settle` are rate limited per client IP and capped at 64 KB per request body.
+`/verify` and `/settle` are rate limited per client IP and capped at 64 KB per request body. The client IP is the `X-Forwarded-For` entry written by the outermost trusted proxy (`TRUSTED_PROXY_HOPS`), so a client cannot dodge the limit by sending its own header.
 
 ## Live demo and stats
 
@@ -153,6 +153,7 @@ The buyer example spends real USDs on Arbitrum One.
 | `PORT` / `HOST` | `3402` / `0.0.0.0` | Listen address |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |
 | `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_MS` | `120` / `60000` | Per-IP limit on `/verify` and `/settle` |
+| `TRUSTED_PROXY_HOPS` | `1` | Proxies in front of the app that append to `X-Forwarded-For`: `1` on Cloud Run, `2` behind an external HTTPS load balancer, `0` when exposed directly |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. Logs are one JSON object per line |
 | `DEMO_PAY_TO` | unset | Enables the paid `/demo/usds-snapshot` route, paying this address |
 | `DEMO_PRICE` | `0.001` | Price of the demo route in USDs |

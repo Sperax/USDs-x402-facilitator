@@ -8,6 +8,7 @@ import { ARBITRUM_ONE, PAYMENT_ASSETS, requirementsExtra } from './assets.js';
 import type { FacilitatorConfig } from './config.js';
 import type { FacilitatorRuntime } from './facilitator.js';
 import { mountDemo } from './demo.js';
+import { clientAddress } from './forwarded.js';
 import type { Logger } from './logger.js';
 import { SettlementIndex } from './stats.js';
 
@@ -45,10 +46,10 @@ async function parseRequest(c: Context): Promise<ParsedRequest | { error: string
 }
 
 /** Fixed-window per-client limiter for the two mutating endpoints. */
-function rateLimiter(max: number, windowMs: number) {
+function rateLimiter(max: number, windowMs: number, trustedProxyHops: number) {
   const hits = new Map<string, { count: number; resetAt: number }>();
   return async (c: Context, next: () => Promise<void>) => {
-    const key = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || c.req.header('x-real-ip') || 'direct';
+    const key = clientAddress(c.req.header('x-forwarded-for'), trustedProxyHops);
     const now = Date.now();
     const entry = hits.get(key);
     if (!entry || entry.resetAt <= now) {
@@ -69,8 +70,8 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
   const app = new Hono();
 
   app.use('*', cors({ origin: config.corsOrigins.includes('*') ? '*' : config.corsOrigins }));
-  app.use('/verify', bodyLimit({ maxSize: 64 * 1024 }), rateLimiter(config.rateLimitMax, config.rateLimitWindowMs));
-  app.use('/settle', bodyLimit({ maxSize: 64 * 1024 }), rateLimiter(config.rateLimitMax, config.rateLimitWindowMs));
+  app.use('/verify', bodyLimit({ maxSize: 64 * 1024 }), rateLimiter(config.rateLimitMax, config.rateLimitWindowMs, config.trustedProxyHops));
+  app.use('/settle', bodyLimit({ maxSize: 64 * 1024 }), rateLimiter(config.rateLimitMax, config.rateLimitWindowMs, config.trustedProxyHops));
 
   app.get('/', (c) =>
     c.json({
@@ -143,7 +144,7 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
         return c.json({ isValid: false, invalidReason: `unsupported_scheme_or_network: ${message}` }, 400);
       }
       log.error('verify threw', { error: message });
-      return c.json({ isValid: false, invalidReason: 'facilitator_error', invalidMessage: message }, 500);
+      return c.json({ isValid: false, invalidReason: 'facilitator_error' }, 500);
     }
   });
 
@@ -162,7 +163,7 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
         return c.json({ success: false, errorReason: `unsupported_scheme_or_network: ${message}`, transaction: '', network }, 400);
       }
       log.error('settle threw', { error: message });
-      return c.json({ success: false, errorReason: 'facilitator_error', errorMessage: message, transaction: '', network }, 500);
+      return c.json({ success: false, errorReason: 'facilitator_error', transaction: '', network }, 500);
     }
   });
 

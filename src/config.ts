@@ -25,6 +25,7 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().default('*'),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
   CONFIRMATION_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MIN_GAS_BALANCE_WEI: z.coerce.bigint().nonnegative().default(200_000_000_000_000n),
   MAX_SPONSORED_GAS_WEI: z.coerce.bigint().nonnegative().default(100_000_000_000_000n),
@@ -53,6 +54,8 @@ export interface FacilitatorConfig {
   corsOrigins: string[];
   rateLimitMax: number;
   rateLimitWindowMs: number;
+  /** Proxies in front of the app that append to X-Forwarded-For (Cloud Run: 1). */
+  trustedProxyHops: number;
   confirmationTimeoutMs: number;
   minGasBalanceWei: bigint;
   /** Upper bound on ETH sent to a buyer to cover their Permit2 approve transaction. */
@@ -92,6 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FacilitatorCon
     corsOrigins: e.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean),
     rateLimitMax: e.RATE_LIMIT_MAX,
     rateLimitWindowMs: e.RATE_LIMIT_WINDOW_MS,
+    trustedProxyHops: e.TRUSTED_PROXY_HOPS,
     confirmationTimeoutMs: e.CONFIRMATION_TIMEOUT_MS,
     minGasBalanceWei: e.MIN_GAS_BALANCE_WEI,
     maxSponsoredGasWei: e.MAX_SPONSORED_GAS_WEI,

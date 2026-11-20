@@ -44,6 +44,8 @@ export function buildOpenApi(opts: {
   contactEmail: string | undefined;
   demo: { price: string; networks: string[] } | undefined;
 }) {
+  const withBase = opts.demo?.networks.includes('eip155:8453') ?? false;
+  const payIn = `USDs (Permit2; the first-time approval gas is sponsored) or USDC (EIP-3009) on Arbitrum One${withBase ? ', or USDC (EIP-3009) on Base' : ''}`;
   const paths: Record<string, unknown> = {
     '/supported': free('supported', 'Supported payment kinds', 'x402 v2 kinds, extensions and signer addresses this facilitator settles.'),
     '/assets': free('assets', 'Settleable assets', 'Assets this facilitator settles, with the exact requirements extra a seller must publish.'),
@@ -66,7 +68,7 @@ export function buildOpenApi(opts: {
         },
         responses: {
           '200': { description: 'USDs supply snapshot', content: json(SNAPSHOT_OUTPUT_SCHEMA as unknown as Record<string, unknown>) },
-          '402': { description: 'Payment Required. Pay in USDs on Arbitrum One (Permit2) or USDC on Base (EIP-3009) via x402 v2.' },
+          '402': { description: `Payment Required. Pay in ${payIn} via x402 v2.` },
         },
       },
     };
@@ -80,7 +82,7 @@ export function buildOpenApi(opts: {
       description:
         'x402 v2 facilitator and paid data for Sperax USD (USDs), the yield-bearing stablecoin on Arbitrum One. Agents pay per request in USDs or USDC with no account or API key.',
       'x-guidance':
-        'GET /demo/usds-snapshot returns live USDs supply data for a fixed price per call; pay it with any x402 v2 client in USDs on Arbitrum One (Permit2; the first-time approval gas is sponsored) or USDC on Base. Free: GET /supported and GET /assets describe what this facilitator settles, GET /stats lists USDs x402 settlements.',
+        `GET /demo/usds-snapshot returns live USDs supply data for a fixed price per call; pay it with any x402 v2 client in ${payIn}. Free: GET /supported and GET /assets describe what this facilitator settles, GET /stats lists USDs x402 settlements.`,
       ...(opts.contactEmail ? { contact: { email: opts.contactEmail } } : {}),
     },
     servers: [{ url: opts.baseUrl }],

@@ -87,7 +87,13 @@ function buildNetworkSigner(config: FacilitatorConfig, network: string, rpcUrls:
     const plan = await planApprovalGas(
       serialized,
       chain.id,
-      (payer) => publicClient.getBalance({ address: payer }),
+      async (payer) => {
+        const [balance, pendingNonce] = await Promise.all([
+          publicClient.getBalance({ address: payer }),
+          publicClient.getTransactionCount({ address: payer, blockTag: 'pending' }),
+        ]);
+        return { balance, pendingNonce };
+      },
       config.maxSponsoredGasWei,
     );
     if (plan.topUp === 0n) return;
