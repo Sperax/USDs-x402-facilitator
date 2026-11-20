@@ -56,7 +56,7 @@ Not listed yet. agentic.market is fed by Coinbase's Bazaar, which catalogs a rou
 
 ### Upstream x402 SDKs
 
-Branch [`nirholas/x402:feat/arbitrum-usds-default-asset`](https://github.com/nirholas/x402/tree/feat/arbitrum-usds-default-asset) adds USDs on Arbitrum One as a Permit2 default asset in the TypeScript, Go and Python SDKs, so every x402 client recognizes USDs without a manual spend-control opt-in. Tests pass in all three SDKs. Opened upstream as [x402-foundation/x402#3513](https://github.com/x402-foundation/x402/pull/3513); its description cites the mainnet settlement above.
+Branch [`nirholas/x402:feat/arbitrum-usds-default-asset`](https://github.com/nirholas/x402/tree/feat/arbitrum-usds-default-asset) adds USDs on Arbitrum One as a Permit2 default asset in the TypeScript, Go and Python SDKs, so every x402 client recognizes USDs without a manual spend-control opt-in. Tests pass in all three SDKs. It was opened upstream as [x402-foundation/x402#3513](https://github.com/x402-foundation/x402/pull/3513), whose description cites the mainnet settlement above, and closed unmerged on 2026-09-18 because upstream requires signed commits. To land it, re-sign the branch's commits (`git rebase --exec 'git commit --amend --no-edit -S' upstream/main`), force-push the branch and open a new pull request with the description in [upstream-default-asset-pr.md](upstream-default-asset-pr.md). Until then, clients opt in to USDs with `usdsSpendControl()` from `src/assets.ts`.
 
 ## Wallets and funding
 

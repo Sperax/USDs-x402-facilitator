@@ -1,6 +1,6 @@
 # Upstream PR: USDs as an x402 default asset
 
-Description for the pull request from `nirholas/x402:feat/arbitrum-usds-default-asset` into `x402-foundation/x402`. Opened as https://github.com/x402-foundation/x402/pull/3513.
+Description for the pull request from `nirholas/x402:feat/arbitrum-usds-default-asset` into `x402-foundation/x402`. First opened as https://github.com/x402-foundation/x402/pull/3513, which was closed unmerged on 2026-09-18 because its commits were unsigned. Reuse this description when the branch is re-signed and opened again.
 
 ## Summary
 
