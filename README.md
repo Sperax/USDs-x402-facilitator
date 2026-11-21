@@ -16,7 +16,7 @@ USDs has no EIP-3009 (`transferWithAuthorization`), which is what "USDC over x40
 
 1. The seller answers an unpaid request with `402`, offering `exact` on `eip155:42161` with `asset` set to USDs and `extra: { assetTransferMethod: "permit2" }`.
 2. The buyer signs a Permit2 witness transfer for exactly that amount to exactly that `payTo`.
-3. **First payment only:** Permit2 needs a one-time USDs allowance. The buyer signs an `approve(Permit2, max)` transaction without broadcasting it, and the facilitator sends the buyer the exact gas that approve needs, then broadcasts it (the `erc20ApprovalGasSponsoring` extension).
+3. **First payment only:** Permit2 needs a one-time USDs allowance. The buyer signs an `approve(Permit2, max)` transaction without broadcasting it, and the facilitator sends the buyer the exact gas that approve needs, then broadcasts it (the `erc20ApprovalGasSponsoring` extension). A buyer that fires several first payments at once signs the same approve, with the same nonce, into each of them: the facilitator broadcasts it once, and every other payment waits for it to mine and then settles through the allowance it created.
 4. The facilitator settles through the canonical x402 Permit2 proxy (`0x402085c248EeA27D92E8b30b2C58ed07f9E20001`), which moves the USDs straight from buyer to seller.
 
 Later payments from the same buyer skip step 3.
@@ -169,5 +169,5 @@ pnpm test        # unit tests: assets, sponsorship limits, the permit guard, HTT
 pnpm test:fork   # end-to-end on an Arbitrum One fork (needs Foundry's anvil)
 ```
 
-The fork suite runs a real seller, a real x402 buyer holding USDs and no ETH, and this facilitator against the live USDs, Permit2 and x402 proxy contracts. It covers the 402 offer, a first payment with sponsored approval, a repeat payment, the EIP-2612 refusal, and the token defect itself. Set `ARBITRUM_FORK_RPC_URL` to fork from your own RPC.
+The fork suite runs a real seller, a real x402 buyer holding USDs and no ETH, and this facilitator against the live USDs, Permit2 and x402 proxy contracts. It covers the 402 offer, a first payment with sponsored approval, a repeat payment, parallel first payments sharing one approval, the EIP-2612 refusal, and the token defect itself. Set `ARBITRUM_FORK_RPC_URL` to fork from your own RPC.
 
