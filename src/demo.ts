@@ -12,6 +12,7 @@ import { ARBITRUM_ONE, BASE, USDC_ARBITRUM, USDC_BASE, USDS_ARBITRUM, priceIn, u
 import { renderDemoPage } from './demo-page.js';
 import { SNAPSHOT_OUTPUT_EXAMPLE, SNAPSHOT_OUTPUT_SCHEMA, buildOpenApi } from './openapi.js';
 import type { SettlementIndex } from './stats.js';
+import { errorText } from './redact.js';
 
 const usdsReadAbi = parseAbi([
   'function totalSupply() view returns (uint256)',
@@ -103,7 +104,7 @@ export function mountDemo(
     try {
       await stats.refresh();
     } catch (err) {
-      c.header('X-Stats-Stale', err instanceof Error ? err.message.slice(0, 120) : 'refresh failed');
+      c.header('X-Stats-Stale', err instanceof Error ? errorText(err).slice(0, 120) : 'refresh failed');
     }
     c.header('Cache-Control', 'public, max-age=30');
     return c.json(stats.snapshot());
