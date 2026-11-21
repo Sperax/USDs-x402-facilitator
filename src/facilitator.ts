@@ -1,5 +1,5 @@
 import { x402Facilitator } from '@x402/core/facilitator';
-import { toFacilitatorEvmSigner } from '@x402/evm';
+import { PERMIT2_ADDRESS, toFacilitatorEvmSigner } from '@x402/evm';
 import { ExactEvmScheme } from '@x402/evm/exact/facilitator';
 import {
   EIP2612_GAS_SPONSORING,
@@ -9,6 +9,7 @@ import {
 import {
   createPublicClient,
   createWalletClient,
+  erc20Abi,
   fallback,
   http,
   type Chain,
@@ -19,11 +20,13 @@ import { arbitrum, base } from 'viem/chains';
 import { ARBITRUM_ONE, BASE } from './assets.js';
 import type { FacilitatorConfig } from './config.js';
 import { checkBrokenPermitSponsoring } from './guards.js';
+import { KeyedLock } from './keyed-lock.js';
 import type { Logger } from './logger.js';
-import { planApprovalGas } from './sponsor.js';
-import { redact } from './redact.js';
+import { inspectApproval, isNonceAlreadyUsedError, planApprovalGas, type ApprovalInspection } from './sponsor.js';
+import { errorText, redact } from './redact.js';
 
 const CHAINS: Record<string, Chain> = { [ARBITRUM_ONE]: arbitrum, [BASE]: base };
+const CONFIRMATION_POLL_MS = 500;
 
 export interface FacilitatorRuntime {
   facilitator: x402Facilitator;
@@ -61,16 +64,27 @@ function buildNetworkSigner(config: FacilitatorConfig, network: string, rpcUrls:
     { confirmationTimeoutMs: config.confirmationTimeoutMs },
   );
 
+  // Several payments from one fresh buyer can arrive before the first settles. Each carries its
+  // own signed approve, all for the same account nonce, so only one of them can ever be mined.
+  // Approvals are handled one payer at a time: the first funds and mines its approve, and the
+  // rest settle through the allowance it created instead of failing on a spent nonce.
+  const approvalLocks = new KeyedLock();
+
   const approvalSigner: Erc20ApprovalGasSponsoringSigner = {
     ...signer,
     sendTransactions: async (transactions) => {
       const hashes: `0x${string}`[] = [];
+      let settledThroughExistingApproval = false;
       for (const tx of transactions) {
-        if (typeof tx === 'string') await fundApprovalGas(tx);
-        const hash =
-          typeof tx === 'string'
-            ? await walletClient.sendRawTransaction({ serializedTransaction: tx })
-            : await walletClient.sendTransaction({ to: tx.to, data: tx.data, gas: tx.gas, chain, account });
+        if (typeof tx === 'string') {
+          const approval = await inspectApproval(tx, chain.id, config.maxSponsoredGasWei);
+          const approvalHash = await approvalLocks.run(approval.payer.toLowerCase(), () => landApproval(tx, approval));
+          if (approvalHash) hashes.push(approvalHash);
+          else settledThroughExistingApproval = true;
+          continue;
+        }
+        if (settledThroughExistingApproval) await assertSettleSucceeds(tx);
+        const hash = await walletClient.sendTransaction({ to: tx.to, data: tx.data, gas: tx.gas, chain, account });
         await confirm(hash);
         hashes.push(hash);
       }
@@ -81,6 +95,74 @@ function buildNetworkSigner(config: FacilitatorConfig, network: string, rpcUrls:
   async function confirm(hash: `0x${string}`) {
     const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: config.confirmationTimeoutMs });
     if (receipt.status !== 'success') throw new Error(`transaction_failed: ${hash}`);
+  }
+
+  /**
+   * Get the buyer's Permit2 approval on chain. Returns the hash of the approve this call mined,
+   * or `undefined` when the approval nonce was already spent (normally by a parallel payment's
+   * approve) and the payment must settle through the allowance that is already in place.
+   */
+  async function landApproval(serialized: `0x${string}`, approval: ApprovalInspection): Promise<`0x${string}` | undefined> {
+    const pendingNonce = await publicClient.getTransactionCount({ address: approval.payer, blockTag: 'pending' });
+    if (approval.nonce > pendingNonce) {
+      throw new Error(
+        `sponsor_rejected: approve uses nonce ${approval.nonce}, but the payer's next nonce is ${pendingNonce}; sign the payment again`,
+      );
+    }
+    if (approval.nonce < pendingNonce) return awaitSpentApproval(approval);
+
+    await fundApprovalGas(serialized);
+    let hash: `0x${string}`;
+    try {
+      hash = await walletClient.sendRawTransaction({ serializedTransaction: serialized });
+    } catch (error) {
+      // Lost a race this process cannot see (the buyer, or another instance, used the nonce first).
+      if (isNonceAlreadyUsedError(error)) return awaitSpentApproval(approval);
+      throw error;
+    }
+    await confirm(hash);
+    return hash;
+  }
+
+  /** Wait until the transaction that spent the approval nonce is mined, then report the allowance it left. */
+  async function awaitSpentApproval(approval: ApprovalInspection): Promise<undefined> {
+    const deadline = Date.now() + config.confirmationTimeoutMs;
+    while ((await publicClient.getTransactionCount({ address: approval.payer, blockTag: 'latest' })) <= approval.nonce) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `sponsor_rejected: approval nonce ${approval.nonce} is taken by a transaction that has not been mined; retry the payment`,
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, CONFIRMATION_POLL_MS));
+    }
+    const allowance = await publicClient.readContract({
+      address: approval.token,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [approval.payer, PERMIT2_ADDRESS],
+    });
+    if (allowance === 0n) {
+      throw new Error(
+        `sponsor_rejected: approval nonce ${approval.nonce} was already used and the payer has no Permit2 allowance; sign the payment again`,
+      );
+    }
+    log.info('sponsored approval already landed; settling through the existing allowance', {
+      network,
+      payer: approval.payer,
+      nonce: approval.nonce,
+    });
+    return undefined;
+  }
+
+  /** Dry-run the settle call so an allowance this payment did not create is proven sufficient before gas is spent. */
+  async function assertSettleSucceeds(tx: { to: `0x${string}`; data: `0x${string}`; gas?: bigint }) {
+    try {
+      await publicClient.call({ account: account.address, to: tx.to, data: tx.data, gas: tx.gas });
+    } catch (error) {
+      throw new Error(
+        `sponsor_rejected: the payer's existing Permit2 allowance cannot settle this payment (${errorText(error).split('\n')[0]}); sign the payment again`,
+      );
+    }
   }
 
   /** Send the buyer exactly the ETH their signed approve needs, within the sponsorship cap. */

@@ -3,6 +3,7 @@ import {
   decodeFunctionData,
   erc20Abi,
   getAddress,
+  NonceTooLowError,
   parseTransaction,
   recoverTransactionAddress,
   type TransactionSerialized,
@@ -24,24 +25,29 @@ export interface ApprovalGasPlan {
   topUp: bigint;
 }
 
+/** A signed `approve(Permit2, ...)` that passed every check that does not depend on chain state. */
+export interface ApprovalInspection {
+  payer: `0x${string}`;
+  /** The token being approved: always a registered Permit2 asset of this chain. */
+  token: `0x${string}`;
+  nonce: number;
+  /** Worst-case gas cost of the approve transaction: gas limit times max fee. */
+  maxCost: bigint;
+}
+
 /**
- * Work out how much ETH a buyer needs before their signed Permit2 `approve`
- * transaction can be broadcast.
+ * Validate a buyer's signed approve transaction without touching the chain.
  *
- * Under `erc20ApprovalGasSponsoring` the buyer signs the approve but holds no
- * ETH, so the facilitator funds the exact worst-case gas cost first. Only an
- * `approve(Permit2, ...)` on a registered Permit2 asset of this chain is ever
- * funded, and never above `cap`, so the sponsorship cannot be turned into a
- * general-purpose ETH faucet. The approve must also use the payer's next
- * nonce: a stale or future nonce can never be mined in its place, so funding it
- * would hand out ETH without the approval ever landing.
+ * Only an `approve(Permit2, ...)` on a registered Permit2 asset of this chain,
+ * carrying no value and costing at most `cap`, is ever funded or broadcast, so
+ * the sponsorship cannot be turned into a general-purpose ETH faucet or a relay
+ * for arbitrary calls.
  */
-export async function planApprovalGas(
+export async function inspectApproval(
   serialized: `0x${string}`,
   chainId: number,
-  payerState: (payer: `0x${string}`) => Promise<PayerState>,
   cap: bigint,
-): Promise<ApprovalGasPlan> {
+): Promise<ApprovalInspection> {
   const tx = parseTransaction(serialized as TransactionSerialized);
   if (tx.chainId !== chainId) {
     throw new Error(`sponsor_rejected: approve signed for chain ${tx.chainId}, expected ${chainId}`);
@@ -58,6 +64,7 @@ export async function planApprovalGas(
     throw new Error('sponsor_rejected: only approve(Permit2, amount) is sponsored');
   }
   if (tx.value && tx.value > 0n) throw new Error('sponsor_rejected: approve transaction must not carry value');
+  if (tx.nonce === undefined) throw new Error('sponsor_rejected: approve transaction has no nonce');
 
   const gas = tx.gas ?? 0n;
   const feeCap = tx.maxFeePerGas ?? tx.gasPrice ?? 0n;
@@ -68,9 +75,44 @@ export async function planApprovalGas(
   }
 
   const payer = await recoverTransactionAddress({ serializedTransaction: serialized as TransactionSerialized });
+  return { payer, token: getAddress(tx.to), nonce: tx.nonce, maxCost };
+}
+
+/**
+ * Work out how much ETH a buyer needs before their signed Permit2 `approve`
+ * transaction can be broadcast.
+ *
+ * Under `erc20ApprovalGasSponsoring` the buyer signs the approve but holds no
+ * ETH, so the facilitator funds the exact worst-case gas cost first, within the
+ * limits {@link inspectApproval} enforces. The approve must also use the
+ * payer's next nonce: a stale or future nonce can never be mined in its place,
+ * so funding it would hand out ETH without the approval ever landing.
+ */
+export async function planApprovalGas(
+  serialized: `0x${string}`,
+  chainId: number,
+  payerState: (payer: `0x${string}`) => Promise<PayerState>,
+  cap: bigint,
+): Promise<ApprovalGasPlan> {
+  const { payer, nonce, maxCost } = await inspectApproval(serialized, chainId, cap);
   const { balance, pendingNonce } = await payerState(payer);
-  if (tx.nonce !== pendingNonce) {
-    throw new Error(`sponsor_rejected: approve uses nonce ${tx.nonce}, but the payer's next nonce is ${pendingNonce}`);
+  if (nonce !== pendingNonce) {
+    throw new Error(`sponsor_rejected: approve uses nonce ${nonce}, but the payer's next nonce is ${pendingNonce}`);
   }
   return { payer, maxCost, topUp: balance >= maxCost ? 0n : maxCost - balance };
+}
+
+/**
+ * True when a node refused a raw transaction because its nonce is already
+ * taken: mined, or an identical transaction is already in the mempool.
+ */
+export function isNonceAlreadyUsedError(error: unknown): boolean {
+  const messages: string[] = [];
+  for (let e: unknown = error; e instanceof Error && messages.length < 16; e = e.cause) {
+    if (e instanceof NonceTooLowError) return true;
+    messages.push(e.message, (e as { details?: string }).details ?? '');
+  }
+  return /nonce too low|already known|nonce has already been used|known transaction|replacement transaction underpriced/i.test(
+    messages.join('\n'),
+  );
 }

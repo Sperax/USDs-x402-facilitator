@@ -79,4 +79,4 @@ Keys live in Secret Manager (`sperax-x402-facilitator-key`, `sperax-x402-test-bu
 | Domain and certificate state | `gcloud beta run domain-mappings describe --domain x402.sperax.io --region us-central1 --project aerial-vehicle-466722-p5` |
 | Verify end to end locally | `pnpm test && pnpm test:fork` |
 
-Logs are one JSON object per line: `verify`, `settle` (with transaction hash), `sponsored approve gas`, and `payment rejected before chain interaction` (the USDs permit guard).
+Logs are one JSON object per line: `verify`, `settle` (with transaction hash), `sponsored approve gas`, `sponsored approval already landed; settling through the existing allowance` (a parallel first payment reusing another payment's approval), and `payment rejected before chain interaction` (the USDs permit guard).

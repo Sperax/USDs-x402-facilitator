@@ -120,6 +120,7 @@ describe.skipIf(!ANVIL)('USDs x402 payments on an Arbitrum One fork', () => {
       DEMO_PAY_TO: payTo,
       DEMO_PRICE: '0.001',
       STATS_FROM_BLOCK: forkHead.toString(),
+      STATS_RPC_URL: anvil.url,
     });
     const log = createLogger('warn');
     const facilitatorApp = createApp(createFacilitator(config, log), config, log);
@@ -235,6 +236,26 @@ describe.skipIf(!ANVIL)('USDs x402 payments on an Arbitrum One fork', () => {
     expect(await pub.getBalance({ address: buyer.account.address })).toBe(ethAfterFirst);
   });
 
+  it('settles parallel first payments from a fresh buyer, mining the shared sponsored approval once', async () => {
+    const buyer = buyerFetch(generatePrivateKey());
+    await fundWithUsds(buyer.account.address, parseUnits('2', 18));
+    const payToBefore = await usdsBalance(payTo);
+
+    // Each request signs its own approve with the buyer's next nonce before any of them settles,
+    // so all four carry an approval for the same nonce.
+    const responses = await Promise.all(Array.from({ length: 4 }, () => buyer.fetch(`${sellerUrl}/premium`)));
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200]);
+
+    const http402 = new x402HTTPClient(buyer.client);
+    const transactions = responses.map((r) => http402.getPaymentSettleResponse((n) => r.headers.get(n)).transaction);
+    expect(new Set(transactions).size).toBe(4);
+
+    const received = (await usdsBalance(payTo)) - payToBefore;
+    expect(received >= 4n * PRICE_ATOMIC - 4n && received <= 4n * PRICE_ATOMIC).toBe(true);
+    // Exactly one approval was mined from the buyer's account.
+    expect(await pub.getTransactionCount({ address: buyer.account.address })).toBe(1);
+  });
+
   it('refuses an EIP-2612 permit for USDs before spending gas, and moves no funds', async () => {
     const buyer = buyerFetch(generatePrivateKey());
     await fundWithUsds(buyer.account.address, parseUnits('1', 18));
@@ -264,6 +285,9 @@ describe.skipIf(!ANVIL)('USDs x402 payments on an Arbitrum One fork', () => {
     const settle = new x402HTTPClient(buyer.client).getPaymentSettleResponse((n) => res.headers.get(n));
     expect(settle.success).toBe(true);
 
+    // The index trails the head by a few blocks; anvil mines one block per
+    // transaction, so move the fork past that lag before reading the stats.
+    await createTestClient({ chain: arbitrum, mode: 'anvil', transport: http(anvil.url) }).mine({ blocks: 6 });
     const stats = await (await fetch(`${facilitatorUrl}/stats`)).json();
     expect(stats.settlements).toBeGreaterThanOrEqual(4);
     expect(stats.recent.map((r: { transaction: string }) => r.transaction)).toContain(settle.transaction);
