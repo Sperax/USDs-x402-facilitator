@@ -104,7 +104,8 @@ export function mountDemo(
     try {
       await stats.refresh();
     } catch (err) {
-      c.header('X-Stats-Stale', err instanceof Error ? errorText(err).slice(0, 120) : 'refresh failed');
+      // A header value must be one printable line; RPC errors are multi-line.
+      c.header('X-Stats-Stale', (err instanceof Error ? errorText(err) : 'refresh failed').replace(/[^\x20-\x7e]+/g, ' ').trim().slice(0, 120) || 'refresh failed');
     }
     c.header('Cache-Control', 'public, max-age=30');
     return c.json(stats.snapshot());
