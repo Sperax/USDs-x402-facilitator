@@ -30,6 +30,12 @@ export interface SettlementStats {
 const RECENT_LIMIT = 20;
 const MAX_CHUNK = 200_000n;
 const MIN_CHUNK = 1_000n;
+/**
+ * Blocks to stay behind the head. Public RPCs are load-balanced: the head can
+ * come from one node and getLogs land on another a block or two behind, which
+ * rejects a toBlock it has not seen ("Missing or invalid parameters").
+ */
+const HEAD_LAG = 5n;
 
 /**
  * Every USDs payment settled over x402, read straight from Arbitrum One.
@@ -83,8 +89,16 @@ export class SettlementIndex {
     };
   }
 
+  /**
+   * Scan forward in adaptive chunks. A failure shrinks the chunk; successes grow
+   * it back, so one transient error (a rate-limited response, a lagging node)
+   * cannot leave a fresh instance crawling 20M blocks 1k at a time. Progress is
+   * kept: when even the smallest chunk fails, the scan stops where it got to and
+   * the error is reported, and the next refresh resumes from there.
+   */
   private async scan() {
-    const head = await this.client.getBlockNumber();
+    const latest = await this.client.getBlockNumber();
+    const head = latest > HEAD_LAG ? latest - HEAD_LAG : latest;
     while (this.scannedTo < head) {
       const from = this.scannedTo + 1n;
       const to = from + this.chunk - 1n > head ? head : from + this.chunk - 1n;
@@ -92,13 +106,18 @@ export class SettlementIndex {
       try {
         logs = await this.client.getLogs({ address: x402ExactPermit2ProxyAddress, fromBlock: from, toBlock: to });
       } catch (err) {
-        if (this.chunk <= MIN_CHUNK) throw err;
+        if (this.chunk <= MIN_CHUNK) {
+          this.updatedAt = new Date();
+          throw err;
+        }
         this.chunk /= 4n;
+        if (this.chunk < MIN_CHUNK) this.chunk = MIN_CHUNK;
         continue;
       }
       const txs = [...new Set(logs.map((l) => l.transactionHash).filter((h): h is `0x${string}` => !!h))];
       for (const hash of txs) await this.ingest(hash);
       this.scannedTo = to;
+      if (this.chunk < MAX_CHUNK) this.chunk = this.chunk * 2n > MAX_CHUNK ? MAX_CHUNK : this.chunk * 2n;
     }
     this.updatedAt = new Date();
   }
