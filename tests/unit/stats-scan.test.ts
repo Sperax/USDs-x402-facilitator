@@ -76,3 +76,56 @@ describe('GET /stats when the scan fails', () => {
     expect(stale).not.toContain('sk_live_statskey');
   });
 });
+
+import { encodeAbiParameters, encodeEventTopics, erc20Abi } from 'viem';
+import { USDS_ARBITRUM } from '../../src/assets.js';
+
+const PAYER = '0x1111111111111111111111111111111111111111';
+const PAYEE = '0x2222222222222222222222222222222222222222';
+const TX = `0x${'ab'.repeat(32)}` as const;
+const BLOCK_HASH = `0x${'cd'.repeat(32)}` as const;
+
+function settlementChain({ transfersFail }: { transfersFail: boolean }) {
+  const head = FROM + 300_000n;
+  const usds = USDS_ARBITRUM.address.toLowerCase();
+  const client = {
+    getBlockNumber: async () => head,
+    getLogs: async (args: { address: string; fromBlock?: bigint; toBlock?: bigint; blockHash?: string }) => {
+      if (args.address.toLowerCase() === usds) {
+        if (transfersFail) throw new Error('failed to decode receipt at block 506338243');
+        return [{
+          address: USDS_ARBITRUM.address, transactionHash: TX, blockHash: BLOCK_HASH, blockNumber: FROM + 10n,
+          topics: encodeEventTopics({ abi: erc20Abi, eventName: 'Transfer', args: { from: PAYER, to: PAYEE } }),
+          data: encodeAbiParameters([{ type: 'uint256' }], [10n ** 15n]),
+        }];
+      }
+      const inRange = args.fromBlock! <= FROM + 10n && FROM + 10n <= args.toBlock!;
+      return inRange ? [{ transactionHash: TX, blockHash: BLOCK_HASH, blockNumber: FROM + 10n, topics: [], data: '0x' }] : [];
+    },
+    getTransactionReceipt: async () => {
+      throw new Error('receipts must not be needed');
+    },
+  };
+  return { client: client as unknown as PublicClient, head };
+}
+
+describe('settlement index without receipts', () => {
+  it('indexes a settlement from the USDs Transfer logs of its block', async () => {
+    const { client, head } = settlementChain({ transfersFail: false });
+    const index = new SettlementIndex(client, FROM, log);
+    await index.refresh();
+    const s = index.snapshot();
+    expect(s.settlements).toBe(1);
+    expect(s.volumeFormatted).toBe('0.001');
+    expect(s.recent[0]).toMatchObject({ transaction: TX, payer: PAYER, payTo: PAYEE });
+    expect(BigInt(s.scannedToBlock)).toBe(head - 5n);
+  });
+
+  it('skips a settlement whose transfers cannot be read and keeps scanning', async () => {
+    const { client, head } = settlementChain({ transfersFail: true });
+    const index = new SettlementIndex(client, FROM, log);
+    await index.refresh();
+    expect(index.snapshot().settlements).toBe(0);
+    expect(BigInt(index.snapshot().scannedToBlock)).toBe(head - 5n);
+  });
+});

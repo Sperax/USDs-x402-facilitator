@@ -2,6 +2,7 @@ import { x402ExactPermit2ProxyAddress } from '@x402/evm';
 import { decodeEventLog, erc20Abi, formatUnits, getAddress, type Log, type PublicClient } from 'viem';
 import { USDS_ARBITRUM } from './assets.js';
 import type { Logger } from './logger.js';
+import { errorText } from './redact.js';
 
 export interface Settlement {
   transaction: `0x${string}`;
@@ -114,21 +115,39 @@ export class SettlementIndex {
         if (this.chunk < MIN_CHUNK) this.chunk = MIN_CHUNK;
         continue;
       }
-      const txs = [...new Set(logs.map((l) => l.transactionHash).filter((h): h is `0x${string}` => !!h))];
-      for (const hash of txs) await this.ingest(hash);
+      const settlements = new Map<`0x${string}`, { blockHash: `0x${string}`; blockNumber: bigint }>();
+      for (const l of logs) {
+        if (l.transactionHash && l.blockHash && l.blockNumber != null) {
+          settlements.set(l.transactionHash, { blockHash: l.blockHash, blockNumber: l.blockNumber });
+        }
+      }
+      for (const [hash, at] of settlements) await this.ingest(hash, at.blockHash, at.blockNumber);
       this.scannedTo = to;
       if (this.chunk < MAX_CHUNK) this.chunk = this.chunk * 2n > MAX_CHUNK ? MAX_CHUNK : this.chunk * 2n;
     }
     this.updatedAt = new Date();
   }
 
-  private async ingest(hash: `0x${string}`) {
+  /**
+   * Record one settlement from the USDs Transfer logs of its block, matched by
+   * transaction hash. Receipts are not used: arb1.arbitrum.io cannot decode some
+   * legacy stored receipts (it fails on the very first USDs x402 settlement,
+   * 0x4b95dec2...d3f2), which used to stop the whole index at that block. A
+   * settlement whose transfers cannot be read is logged and skipped, so one bad
+   * transaction never blocks the scan. A Settled log implies the transaction
+   * succeeded, since reverted transactions emit no logs.
+   */
+  private async ingest(hash: `0x${string}`, blockHash: `0x${string}`, blockNumber: bigint) {
     if (this.seen.has(hash)) return;
-    const receipt = await this.client.getTransactionReceipt({ hash });
-    if (receipt.status !== 'success') return;
-    const usds = getAddress(USDS_ARBITRUM.address);
-    for (const entry of receipt.logs) {
-      if (getAddress(entry.address) !== usds) continue;
+    let entries: Log[];
+    try {
+      entries = await this.client.getLogs({ address: getAddress(USDS_ARBITRUM.address), blockHash });
+    } catch (err) {
+      this.log.warn('could not read usds transfers for settlement, skipping', { transaction: hash, error: errorText(err) });
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.transactionHash !== hash) continue;
       let decoded;
       try {
         decoded = decodeEventLog({ abi: erc20Abi, data: entry.data, topics: entry.topics });
@@ -144,7 +163,7 @@ export class SettlementIndex {
       this.recent = [
         {
           transaction: hash,
-          block: receipt.blockNumber.toString(),
+          block: blockNumber.toString(),
           payer: from,
           payTo: to,
           amount: value.toString(),
