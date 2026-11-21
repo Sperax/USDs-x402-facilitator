@@ -21,6 +21,7 @@ import type { FacilitatorConfig } from './config.js';
 import { checkBrokenPermitSponsoring } from './guards.js';
 import type { Logger } from './logger.js';
 import { planApprovalGas } from './sponsor.js';
+import { redact } from './redact.js';
 
 const CHAINS: Record<string, Chain> = { [ARBITRUM_ONE]: arbitrum, [BASE]: base };
 
@@ -144,7 +145,7 @@ export function createFacilitator(config: FacilitatorConfig, log: Logger): Facil
       log.info('verify', { network: requirements.network, asset: requirements.asset, amount: requirements.amount, payer: result.payer });
     })
     .onVerifyFailure(async ({ requirements, error }) => {
-      log.warn('verify failed', { network: requirements.network, asset: requirements.asset, error: error.message });
+      log.warn('verify failed', { network: requirements.network, asset: requirements.asset, error: redact(error.message) });
     })
     .onAfterSettle(async ({ requirements, result }) => {
       log.info('settle', {
@@ -158,7 +159,7 @@ export function createFacilitator(config: FacilitatorConfig, log: Logger): Facil
       });
     })
     .onSettleFailure(async ({ requirements, error }) => {
-      log.error('settle failed', { network: requirements.network, asset: requirements.asset, error: error.message });
+      log.error('settle failed', { network: requirements.network, asset: requirements.asset, error: redact(error.message) });
     });
 
   return {

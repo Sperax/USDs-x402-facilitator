@@ -11,6 +11,7 @@ import { mountDemo } from './demo.js';
 import { clientAddress } from './forwarded.js';
 import type { Logger } from './logger.js';
 import { SettlementIndex } from './stats.js';
+import { errorText, redactResult } from './redact.js';
 
 const VERSION = '2.0.0';
 
@@ -103,7 +104,7 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
             ...(balance < config.minGasBalanceWei ? { error: 'signer gas balance below MIN_GAS_BALANCE_WEI' } : {}),
           };
         } catch (err) {
-          return { network, ok: false, error: err instanceof Error ? err.message : String(err) };
+          return { network, ok: false, error: errorText(err) };
         }
       }),
     );
@@ -137,9 +138,9 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
     const req = await parseRequest(c);
     if ('error' in req) return c.json({ isValid: false, invalidReason: req.error }, 400);
     try {
-      return c.json(await facilitator.verify(req.paymentPayload, req.paymentRequirements));
+      return c.json(redactResult(await facilitator.verify(req.paymentPayload, req.paymentRequirements)));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       if (message.startsWith('No facilitator registered')) {
         return c.json({ isValid: false, invalidReason: `unsupported_scheme_or_network: ${message}` }, 400);
       }
@@ -153,9 +154,9 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
     const network = 'error' in req ? '' : req.paymentRequirements.network;
     if ('error' in req) return c.json({ success: false, errorReason: req.error, transaction: '', network }, 400);
     try {
-      return c.json(await facilitator.settle(req.paymentPayload, req.paymentRequirements));
+      return c.json(redactResult(await facilitator.settle(req.paymentPayload, req.paymentRequirements)));
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       if (message.startsWith('Settlement aborted: ')) {
         return c.json({ success: false, errorReason: message.slice('Settlement aborted: '.length), transaction: '', network });
       }
