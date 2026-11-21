@@ -2,7 +2,8 @@ import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
-import { formatEther } from 'viem';
+import { createPublicClient, formatEther, http, type PublicClient } from 'viem';
+import { arbitrum as arbitrumChain } from 'viem/chains';
 import { z } from 'zod';
 import { ARBITRUM_ONE, PAYMENT_ASSETS, requirementsExtra } from './assets.js';
 import type { FacilitatorConfig } from './config.js';
@@ -173,7 +174,11 @@ export function createApp(runtime: FacilitatorRuntime, config: FacilitatorConfig
     mountDemo(app, {
       facilitator,
       arbitrum,
-      stats: new SettlementIndex(arbitrum, config.statsFromBlock, log),
+      stats: new SettlementIndex(
+        createPublicClient({ chain: arbitrumChain, transport: http(config.statsRpcUrl) }) as PublicClient,
+        config.statsFromBlock,
+        log,
+      ),
       demo: config.demo,
       publicUrl: config.publicUrl,
       networks: runtime.networks,

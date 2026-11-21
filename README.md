@@ -149,6 +149,7 @@ The buyer example spends real USDs on Arbitrum One.
 | `BASE_RPC_URL` | `https://mainnet.base.org` | Base RPC |
 | `MAX_SPONSORED_GAS_WEI` | `100000000000000` | Most ETH sent to one buyer to cover their approve. Only `approve(Permit2, ...)` on a Permit2 asset is ever funded |
 | `MIN_GAS_BALANCE_WEI` | `200000000000000` | `/ready` reports degraded below this signer balance |
+| `STATS_RPC_URL` | `https://arb1.arbitrum.io/rpc` | Arbitrum RPC the `/stats` settlement index reads logs from. Separate from `ARBITRUM_RPC_URL` because keyed providers cap `eth_getLogs` ranges |
 | `CONFIRMATION_TIMEOUT_MS` | `60000` | Receipt wait before settlement is reported as pending |
 | `PORT` / `HOST` | `3402` / `0.0.0.0` | Listen address |
 | `CORS_ORIGINS` | `*` | Comma-separated allowed origins |

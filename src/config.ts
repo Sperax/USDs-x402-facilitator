@@ -38,6 +38,10 @@ const envSchema = z.object({
     .optional(),
   DEMO_PRICE: z.string().regex(/^\d+(\.\d+)?$/, 'DEMO_PRICE must be a decimal such as 0.001').default('0.001'),
   STATS_FROM_BLOCK: z.coerce.bigint().nonnegative().default(506_000_000n),
+  // The settlement index scans ~20M Arbitrum blocks of logs in large chunks. Keyed
+  // providers (Alchemy free tier) cap eth_getLogs ranges far below that, so the index
+  // reads from its own endpoint, public by default, while settlement keeps ARBITRUM_RPC_URL.
+  STATS_RPC_URL: z.string().url().default('https://arb1.arbitrum.io/rpc'),
 });
 
 export interface NetworkConfig {
@@ -69,6 +73,8 @@ export interface FacilitatorConfig {
   contactEmail: string | undefined;
   /** First Arbitrum block the settlement index scans. */
   statsFromBlock: bigint;
+  /** Arbitrum RPC the settlement index reads logs from (separate from settlement). */
+  statsRpcUrl: string;
 }
 
 /** Parse and validate configuration. Arbitrum is on by default, Base is opt-in. */
@@ -103,6 +109,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FacilitatorCon
     publicUrl: e.PUBLIC_URL,
     demo: e.DEMO_PAY_TO ? { payTo: e.DEMO_PAY_TO as `0x${string}`, price: e.DEMO_PRICE } : undefined,
     statsFromBlock: e.STATS_FROM_BLOCK,
+    statsRpcUrl: e.STATS_RPC_URL,
     contactEmail: e.CONTACT_EMAIL,
   };
 }
