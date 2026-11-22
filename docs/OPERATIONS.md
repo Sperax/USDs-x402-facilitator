@@ -1,6 +1,6 @@
 # Operations: the live Sperax x402 facilitator
 
-How the production facilitator at https://x402.sperax.io is deployed, what it is connected to, and how to run it. Facts are as of 2026-09-18.
+How the production facilitator at https://x402.sperax.io is deployed, what it is connected to, and how to run it. Facts are as of 2026-11-22.
 
 ## At a glance
 
@@ -11,7 +11,8 @@ How the production facilitator at https://x402.sperax.io is deployed, what it is
 | Discovery document | https://x402.sperax.io/openapi.json |
 | Health | https://x402.sperax.io/ready (per-network RPC and signer gas) |
 | Networks | Arbitrum One `eip155:42161` (USDs via Permit2, USDC via EIP-3009), Base `eip155:8453` (USDC via EIP-3009) |
-| Signer wallet | `0x42FfaFb149655407AAFD63628275fce64232EE21` (pays settlement gas and sponsored approvals on both chains) |
+| Signer wallet | `0x402BB1A2B614E4FBa1a19b270fb8183FA7E18402` (pays settlement gas and sponsored approvals on both chains) |
+| Demo payee | `0x40252CFDF8B20Ed757D61ff157719F33Ec332402` (`DEMO_PAY_TO`) |
 | First mainnet USDs payment over x402 | [0x4b95dec2...d3f2](https://arbiscan.io/tx/0x4b95dec2536a2911cab43f494d299d2093406b8f1576c84b4a7935106221d3f2) (0.001 USDs for `/demo/usds-snapshot`, settled through the canonical x402 Permit2 proxy) |
 
 ## Hosting
@@ -19,8 +20,16 @@ How the production facilitator at https://x402.sperax.io is deployed, what it is
 - **Google Cloud Run** service `sperax-x402-facilitator`, project `aerial-vehicle-466722-p5`, region `us-central1`.
 - One instance (`min-instances 1`, `max-instances 1`). Pending settlements are tracked in memory and a single signer keeps nonces sequential; raise the instance count only after moving the pending-settlement store to shared storage.
 - Image: `us-central1-docker.pkg.dev/aerial-vehicle-466722-p5/containers/sperax-x402-facilitator:<git short sha>`, built on Cloud Build by [`deploy/cloud-run.sh`](../deploy/cloud-run.sh) with the build service account `three-ws-build@`, running as `three-ws@`.
-- The signer key is **never** in env files or the image: Cloud Run mounts it from Secret Manager secret `sperax-x402-facilitator-key` as `FACILITATOR_PRIVATE_KEY`.
-- Runtime settings on the service: `ARBITRUM_RPC_URL=https://arb1.arbitrum.io/rpc`, `ENABLE_BASE=true`, `BASE_RPC_URL=https://mainnet.base.org`, `DEMO_PAY_TO` (the signer wallet), `LOG_LEVEL=info`, `CONFIRMATION_TIMEOUT_MS=60000`. `--update-env-vars` merges, so a redeploy keeps these.
+- Secrets are **never** in env files or the image. Cloud Run reads them from Secret Manager at revision start:
+
+  | Env var | Secret | Holds |
+  |---|---|---|
+  | `FACILITATOR_PRIVATE_KEY` | `sperax-x402-facilitator-key-20261121` | Signer key |
+  | `ARBITRUM_RPC_URL` | `sperax-facilitator-arbitrum-rpc-url` | Keyed Arbitrum One RPC URL(s), comma-separated for failover |
+  | `BASE_RPC_URL` | `sperax-facilitator-base-rpc-url` | Keyed Base RPC URL(s) |
+
+- Plain settings: `ENABLE_BASE=true`, `DEMO_PAY_TO=0x40252CFDF8B20Ed757D61ff157719F33Ec332402`, `LOG_LEVEL=info`, `CONFIRMATION_TIMEOUT_MS=60000`.
+- The deploy script is declarative: it sets the complete env and secret configuration with `--set-env-vars` and `--set-secrets`, so a setting changed by hand is reset on the next deploy. Make a persistent change in the script, or pass it as `EXTRA_ENV_VARS` (`|`-separated). Before it deploys, the script checks that each secret has an enabled latest version, and it refuses to build from a dirty working tree.
 
 ## Domain
 
@@ -62,21 +71,38 @@ Branch [`nirholas/x402:feat/arbitrum-usds-default-asset`](https://github.com/nir
 
 | Wallet | Role | Funds |
 |---|---|---|
-| `0x42FfaFb149655407AAFD63628275fce64232EE21` | Facilitator signer and demo payee | ETH on Arbitrum One and Base for gas; receives demo payments |
+| `0x402BB1A2B614E4FBa1a19b270fb8183FA7E18402` | Facilitator signer | ETH on Arbitrum One and Base for gas |
+| `0x40252CFDF8B20Ed757D61ff157719F33Ec332402` | Demo payee (`DEMO_PAY_TO`) | Receives demo payments |
 | `0x562435c6f3853D742F9F1FbE6f5AEc414eE7721F` | Test buyer | USDs on Arbitrum One |
 
-Keys live in Secret Manager (`sperax-x402-facilitator-key`, `sperax-x402-test-buyer-key`). `/ready` returns 503 when the signer's gas on any enabled network drops below `MIN_GAS_BALANCE_WEI` (0.0002 ETH by default); top it up before that. Each settlement costs a few cents of gas at most on either chain; a sponsored first-time approval adds about 0.00007 ETH on Arbitrum.
+Keys live in Secret Manager (`sperax-x402-facilitator-key-20261121`, `sperax-x402-test-buyer-key`). `/ready` returns 503 when the signer's gas on any enabled network drops below `MIN_GAS_BALANCE_WEI` (0.0002 ETH by default); top it up before that. Each settlement costs a few cents of gas at most on either chain; a sponsored first-time approval adds about 0.00007 ETH on Arbitrum.
 
 ## Runbook
 
 | Task | Command |
 |---|---|
-| Build and deploy | `DEMO_PAY_TO=0x42FfaFb149655407AAFD63628275fce64232EE21 ./deploy/cloud-run.sh` |
-| Deploy the last built image | `SKIP_BUILD=1 DEMO_PAY_TO=... ./deploy/cloud-run.sh` |
-| Change one setting | `gcloud run services update sperax-x402-facilitator --region us-central1 --project aerial-vehicle-466722-p5 --update-env-vars KEY=VALUE` |
+| Build and deploy | `./deploy/cloud-run.sh` |
+| Redeploy the last built image | `SKIP_BUILD=1 ./deploy/cloud-run.sh` (`IMAGE_TAG=<sha>` to roll back) |
+| Persistent extra setting | `EXTRA_ENV_VARS='MIN_GAS_BALANCE_WEI=300000000000000' ./deploy/cloud-run.sh` |
+| Change an RPC URL | `printf %s "$URL" \| gcloud secrets versions add sperax-facilitator-arbitrum-rpc-url --data-file=- --project aerial-vehicle-466722-p5`, then `SKIP_BUILD=1 ./deploy/cloud-run.sh` |
 | Health | `curl https://x402.sperax.io/ready` |
 | Logs | `gcloud logging read 'resource.type="cloud_run_revision" resource.labels.service_name="sperax-x402-facilitator"' --project aerial-vehicle-466722-p5 --freshness=1h` |
 | Domain and certificate state | `gcloud beta run domain-mappings describe --domain x402.sperax.io --region us-central1 --project aerial-vehicle-466722-p5` |
 | Verify end to end locally | `pnpm test && pnpm test:fork` |
 
 Logs are one JSON object per line: `verify`, `settle` (with transaction hash), `sponsored approve gas`, `sponsored approval already landed; settling through the existing allowance` (a parallel first payment reusing another payment's approval), and `payment rejected before chain interaction` (the USDs permit guard).
+
+## Alerting
+
+- Cloud Monitoring uptime check "Sperax x402 facilitator /ready" (`uptimeCheckConfigs/sperax-x402-facilitator-ready-6gDBH3cct7w`) requests `https://x402.sperax.io/ready` every 60 s from Oregon, Iowa, Virginia and Europe. It expects a 2xx with `"status":"ready"` in the body.
+- Alert policy `alertPolicies/16154984759970592663` fires when more than one region fails for 2 minutes. It emails the existing project notification channel `notificationChannels/18412267498156506146`.
+- The three.ws uptime policy (`alertPolicies/13045175392198891564`) excludes this check, so one outage sends one alert.
+- When it fires: `curl -s https://x402.sperax.io/ready` shows which network failed. `rpc` failing means the keyed RPC is down or out of quota, so rotate the RPC secret (runbook above). `gas` below the minimum means the signer needs ETH on that chain.
+
+## Key rotation history
+
+| Date | Change |
+|---|---|
+| 2026-11-21 | Signer rotated to `0x402BB1A2B614E4FBa1a19b270fb8183FA7E18402` (secret `sperax-x402-facilitator-key-20261121`) after the previous key was exposed in a local transcript. The previous signers `0x4028…3402` (`sperax-x402-facilitator-key-402`) and `0x42FfaFb149655407AAFD63628275fce64232EE21` (`sperax-x402-facilitator-key`) were swept to dust, and their secret versions are disabled. Settlement through the new signer was verified on mainnet on both chains. |
+
+To rotate: generate the key offline and add it to a new dated secret without printing it. Grant `three-ws@` `secretAccessor`, fund the address with ETH on both chains, and deploy with `KEY_SECRET=<new secret>`. Confirm `/ready` and one paid call on each chain. Then sweep the old address and disable the old secret's versions (`gcloud secrets versions disable`). Update `KEY_SECRET`'s default in `deploy/cloud-run.sh` and this document.
